@@ -1080,7 +1080,17 @@ defmodule Ash.Expr do
     {type, constraints}
   end
 
-  def determine_types(mod, values, known_result, _nested?) do
+  def determine_types(mod, values, known_result, nested?) do
+    ash_dt_start = if !nested?, do: System.monotonic_time(:microsecond), else: nil
+
+    # Increment call counter in process dictionary
+    if !nested? do
+      Process.put(:ash_determine_types_calls, 0)
+      IO.puts("            [ASH_DETERMINE_TYPES] START for #{inspect(mod)} with #{length(values)} values")
+    else
+      Process.put(:ash_determine_types_calls, (Process.get(:ash_determine_types_calls, 0) + 1))
+    end
+
     Code.ensure_compiled(mod)
 
     known_result =
@@ -1103,7 +1113,7 @@ defmodule Ash.Expr do
           nil
       end
 
-    cond do
+    types_returns = cond do
       :erlang.function_exported(mod, :types, 0) ->
         {mod.types(), mod.returns()}
 
@@ -1113,6 +1123,8 @@ defmodule Ash.Expr do
       true ->
         {[:any], [:any]}
     end
+
+    types_returns
     |> then(fn {types, returns} ->
       if types == :var_args || returns == :no_return || returns == :unknown do
         []
@@ -1369,10 +1381,32 @@ defmodule Ash.Expr do
     |> Enum.filter(& &1)
     |> case do
       [{types, returns, _}] ->
-        {types, returns}
+        result = {types, returns}
+
+        if !nested? && ash_dt_start do
+          ash_dt_end = System.monotonic_time(:microsecond)
+          recursive_calls = Process.get(:ash_determine_types_calls, 0)
+          IO.puts("            [ASH_DETERMINE_TYPES] END for #{inspect(mod)}")
+          IO.puts("            [ASH_DETERMINE_TYPES]   Total time: #{ash_dt_end - ash_dt_start}μs")
+          IO.puts("            [ASH_DETERMINE_TYPES]   Recursive calls: #{recursive_calls}")
+          Process.delete(:ash_determine_types_calls)
+        end
+
+        result
 
       types ->
-        select_matches(types, length(values), values)
+        result = select_matches(types, length(values), values)
+
+        if !nested? && ash_dt_start do
+          ash_dt_end = System.monotonic_time(:microsecond)
+          recursive_calls = Process.get(:ash_determine_types_calls, 0)
+          IO.puts("            [ASH_DETERMINE_TYPES] END for #{inspect(mod)}")
+          IO.puts("            [ASH_DETERMINE_TYPES]   Total time: #{ash_dt_end - ash_dt_start}μs")
+          IO.puts("            [ASH_DETERMINE_TYPES]   Recursive calls: #{recursive_calls}")
+          Process.delete(:ash_determine_types_calls)
+        end
+
+        result
     end
   end
 

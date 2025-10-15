@@ -349,6 +349,8 @@ defmodule AshPostgres.SqlImplementation do
 
   @impl true
   def determine_types(mod, args, returns \\ nil) do
+    pg_dt_start = System.monotonic_time(:microsecond)
+
     returns =
       case returns do
         {:parameterized, _} -> nil
@@ -359,7 +361,15 @@ defmodule AshPostgres.SqlImplementation do
         other -> other
       end
 
+    before_ash_expr = System.monotonic_time(:microsecond)
     {types, new_returns} = Ash.Expr.determine_types(mod, args, returns)
+    after_ash_expr = System.monotonic_time(:microsecond)
+
+    pg_dt_end = System.monotonic_time(:microsecond)
+    if pg_dt_end - pg_dt_start > 5000 do
+      IO.puts("          [PG_DETERMINE_TYPES] Total: #{pg_dt_end - pg_dt_start}μs")
+      IO.puts("          [PG_DETERMINE_TYPES]   Ash.Expr.determine_types: #{after_ash_expr - before_ash_expr}μs")
+    end
 
     {types, new_returns || returns}
   end

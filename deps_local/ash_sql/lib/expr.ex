@@ -1303,6 +1303,14 @@ defmodule AshSql.Expr do
          acc,
          type
        ) do
+    operator_start = System.monotonic_time(:microsecond)
+    if operator == :<> do
+      IO.puts("        [CONCAT] START operator: #{operator}, mod: #{mod}")
+      IO.puts("        [CONCAT]   left: #{if is_struct(left), do: left.__struct__, else: inspect(left)}")
+      IO.puts("        [CONCAT]   right: #{if is_struct(right), do: right.__struct__, else: inspect(right)}")
+    end
+
+    before_determine = System.monotonic_time(:microsecond)
     {[left_type, right_type], type} =
       case operator do
         :/ ->
@@ -1330,6 +1338,12 @@ defmodule AshSql.Expr do
           determine_types(bindings.sql_behaviour, mod, [left, right], type)
       end
 
+    after_determine = System.monotonic_time(:microsecond)
+    if operator == :<> do
+      IO.puts("        [CONCAT]   determine_types: #{after_determine - before_determine}μs")
+    end
+
+    before_left = System.monotonic_time(:microsecond)
     {left_expr, acc} =
       if left_type do
         maybe_type_expr(
@@ -1350,6 +1364,11 @@ defmodule AshSql.Expr do
           left_type
         )
       end
+
+    after_left = System.monotonic_time(:microsecond)
+    if operator == :<> do
+      IO.puts("        [CONCAT]   process LEFT: #{after_left - before_left}μs")
+    end
 
     with :in <- operator,
          {:ok, item_type} <- extract_multidimensional_array_type(right_type),
@@ -1403,6 +1422,7 @@ defmodule AshSql.Expr do
             {Ecto.Query.dynamic(^left_expr in ^right_expr), acc}
           end
         else
+          before_right = System.monotonic_time(:microsecond)
           {right_expr, acc} =
             evaluate_right(
               query,
@@ -1412,6 +1432,11 @@ defmodule AshSql.Expr do
               acc,
               right_type
             )
+
+          after_right = System.monotonic_time(:microsecond)
+          if operator == :<> do
+            IO.puts("        [CONCAT]   process RIGHT: #{after_right - before_right}μs")
+          end
 
           case operator do
             :== ->
@@ -1445,7 +1470,9 @@ defmodule AshSql.Expr do
               {Ecto.Query.dynamic(^left_expr * ^right_expr), acc}
 
             :<> ->
-              do_dynamic_expr(
+              before_fragment = System.monotonic_time(:microsecond)
+              IO.puts("        [CONCAT]   Creating Fragment and calling do_dynamic_expr...")
+              result = do_dynamic_expr(
                 query,
                 %Fragment{
                   embedded?: pred_embedded?,
@@ -1462,6 +1489,11 @@ defmodule AshSql.Expr do
                 acc,
                 type
               )
+              after_fragment = System.monotonic_time(:microsecond)
+              operator_end = System.monotonic_time(:microsecond)
+              IO.puts("        [CONCAT]   Fragment do_dynamic_expr: #{after_fragment - before_fragment}μs")
+              IO.puts("        [CONCAT] END total: #{operator_end - operator_start}μs")
+              result
 
             :|| ->
               cond do
@@ -2013,9 +2045,14 @@ defmodule AshSql.Expr do
          acc,
          _type
        ) do
+    type_start = System.monotonic_time(:microsecond)
+    IO.puts("        [TYPE] Processing Type: casting to #{inspect(arg2)}")
+    IO.puts("        [TYPE]   arg1 type: #{if is_struct(arg1), do: arg1.__struct__, else: inspect(arg1)}")
+
     arg2 = Ash.Type.get_type(arg2)
     arg1 = maybe_uuid_to_binary(arg2, arg1, arg1)
 
+    before_parameterized = System.monotonic_time(:microsecond)
     type =
       parameterized_type(
         bindings.sql_behaviour,
@@ -2023,6 +2060,8 @@ defmodule AshSql.Expr do
         constraints,
         :expr
       )
+    after_parameterized = System.monotonic_time(:microsecond)
+    IO.puts("        [TYPE]   parameterized_type: #{after_parameterized - before_parameterized}μs")
 
     if type do
       bindings =
@@ -2040,9 +2079,13 @@ defmodule AshSql.Expr do
 
       validate_type!(query, type, arg1)
 
+      before_inner = System.monotonic_time(:microsecond)
+      IO.puts("        [TYPE]   Calling do_dynamic_expr on inner arg1...")
       {expr, acc} = do_dynamic_expr(query, arg1, bindings, embedded?, acc, {arg2, constraints})
+      after_inner = System.monotonic_time(:microsecond)
+      IO.puts("        [TYPE]   Inner do_dynamic_expr: #{after_inner - before_inner}μs")
 
-      case {type, expr} do
+      result = case {type, expr} do
         {{:parameterized, Ash.Type.Map.EctoType, []}, %Ecto.Query.DynamicExpr{}} ->
           {expr, acc}
 
@@ -2050,9 +2093,18 @@ defmodule AshSql.Expr do
           {expr, acc}
 
         _ ->
-          {query.__ash_bindings__.sql_behaviour.type_expr(expr, type), acc}
+          before_type_expr = System.monotonic_time(:microsecond)
+          result = {query.__ash_bindings__.sql_behaviour.type_expr(expr, type), acc}
+          after_type_expr = System.monotonic_time(:microsecond)
+          IO.puts("        [TYPE]   type_expr: #{after_type_expr - before_type_expr}μs")
+          result
       end
+
+      type_end = System.monotonic_time(:microsecond)
+      IO.puts("        [TYPE] Type processing total: #{type_end - type_start}μs")
+      result
     else
+      IO.puts("        [TYPE]   No type, delegating to do_dynamic_expr")
       do_dynamic_expr(query, arg1, bindings, embedded?, acc, arg2)
     end
   end
@@ -3502,18 +3554,37 @@ defmodule AshSql.Expr do
   end
 
   defp determine_types(sql_behaviour, mod, args, returns) do
+    dt_start = System.monotonic_time(:microsecond)
+
     {types, new_returns} =
       if function_exported?(sql_behaviour, :determine_types, 3) do
-        case sql_behaviour.determine_types(mod, args, returns) do
+        before_call3 = System.monotonic_time(:microsecond)
+        result = case sql_behaviour.determine_types(mod, args, returns) do
           {types, returns} -> {types, returns}
           types -> {types, nil}
         end
+        after_call3 = System.monotonic_time(:microsecond)
+        if after_call3 - before_call3 > 5000 do
+          IO.puts("          [DETERMINE_TYPES] sql_behaviour.determine_types/3 for #{inspect(mod)}: #{after_call3 - before_call3}μs")
+        end
+        result
       else
-        case sql_behaviour.determine_types(mod, args) do
+        before_call2 = System.monotonic_time(:microsecond)
+        result = case sql_behaviour.determine_types(mod, args) do
           {types, returns} -> {types, returns}
           types -> {types, nil}
         end
+        after_call2 = System.monotonic_time(:microsecond)
+        if after_call2 - before_call2 > 5000 do
+          IO.puts("          [DETERMINE_TYPES] sql_behaviour.determine_types/2 for #{inspect(mod)}: #{after_call2 - before_call2}μs")
+        end
+        result
       end
+
+    dt_end = System.monotonic_time(:microsecond)
+    if dt_end - dt_start > 5000 do
+      IO.puts("          [DETERMINE_TYPES] TOTAL for #{inspect(mod)}: #{dt_end - dt_start}μs (#{length(args)} args)")
+    end
 
     {types, new_returns || returns}
   end
