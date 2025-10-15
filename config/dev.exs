@@ -1,11 +1,14 @@
 import Config
+config :ash, policies: [show_policy_breakdowns?: true]
+
+config :app, :running_env, "dev"
 
 # Configure your database
 config :app, App.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
-  database: "app_dev",
+  database: "slowrepro_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
