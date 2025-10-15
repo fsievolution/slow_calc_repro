@@ -42,9 +42,10 @@ defmodule App.MixProject do
   defp deps do
     [
       {:sourceror, "~> 1.8", only: [:dev, :test]},
-      {:ash_postgres, "~> 2.0"},
+      {:ash_sql, path: "deps_local/ash_sql", override: true},
+      {:ash_postgres, path: "deps_local/ash_postgres", override: true},
       {:ash_phoenix, "~> 2.0"},
-      {:ash, "~> 3.0"},
+      {:ash, path: "deps_local/ash", override: true},
       {:igniter, "~> 0.6", only: [:dev, :test]},
       {:phoenix, "~> 1.8.1"},
       {:phoenix_ecto, "~> 4.5"},
